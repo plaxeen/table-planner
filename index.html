@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Table Planner</title>
   <link rel="manifest" href="manifest.json">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <style>
+    :root {
+      --toolbar-width: 60px;
+    }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       margin: 0;
@@ -18,36 +19,41 @@
     }
     #planner {
       display: flex;
-      flex-direction: column;
       height: 100vh;
     }
     #toolbar {
+      width: var(--toolbar-width);
       background: #2c3e50;
       color: white;
-      padding: 10px;
+      padding: 10px 5px;
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
       gap: 10px;
       align-items: center;
+      z-index: 10;
     }
     #toolbar button {
-      padding: 10px 15px;
+      width: 50px;
+      height: 50px;
       border: none;
       border-radius: 5px;
       background-color: #3498db;
       color: white;
+      font-size: 18px;
       cursor: pointer;
       transition: background 0.3s;
     }
     #toolbar button:hover {
       background-color: #2980b9;
     }
-    #canvas {
-      flex-grow: 1;
-      background: #ecf0f1;
+    #canvas-wrapper {
       position: relative;
-      touch-action: none;
-      overflow: auto;
+      overflow: hidden;
+      flex-grow: 1;
+    }
+    #canvas {
+      position: absolute;
+      transform-origin: top left;
     }
     .table {
       position: absolute;
@@ -59,28 +65,21 @@
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     }
     .chair {
-  width: 20px;
-  height: 20px;
-  background-color: #95a5a6;
-  border-radius: 50%;
-  display: inline-block;
-  margin: 3px;
-  position: absolute; /* Оставляем абсолютное позиционирование для размещения вокруг стола */
-  z-index: 1;  /* Убедимся, что кресла находятся ниже полей ввода */
-}
-
-.chair input {
-  position: absolute;
-  top: 25px;
-  left: -20px;
-  width: 60px;
-  font-size: 10px;
-  z-index: 10;
-  padding: 5px;
-  pointer-events: auto; /* Убедимся, что текстовое поле можно редактировать */
-}
-
-
+      width: 20px;
+      height: 20px;
+      background-color: #95a5a6;
+      border-radius: 50%;
+      display: inline-block;
+      margin: 3px;
+      position: relative;
+    }
+    .chair input {
+      position: absolute;
+      top: -25px;
+      left: -20px;
+      width: 100px;
+      font-size: 10px;
+    }
     .guest-list {
       position: fixed;
       bottom: 0;
@@ -91,98 +90,208 @@
       overflow-y: auto;
       padding: 10px;
       border-top: 1px solid #ccc;
+      transition: transform 0.3s;
+	  margin-left: var(--toolbar-width);
+	  padding-left: 20px;
     }
-    @media (max-width: 768px) {
-      #toolbar {
-        flex-direction: column;
-      }
+    .guest-list.hidden {
+      transform: translateY(100%);
+    }
+    #zoom-controls {
+      position: fixed;
+      bottom: 100px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 1000;
+    }
+    #zoom-controls button {
+      width: 40px;
+      height: 40px;
+      font-size: 24px;
+      background-color: #34495e;
+      color: white;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    #toggleGuestList {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: none;
+      background: #2c3e50;
+      color: white;
+      font-size: 20px;
+      z-index: 1000;
     }
   </style>
 </head>
 <body>
   <div id="planner">
     <div id="toolbar">
-      <label>Стульев: <input id="chairCount" type="number" min="1" value="4" style="width: 60px;"></label>
-      <button onclick="addTableWithInput()">Добавить стол</button>
-      <button onclick="exportGuestList()">Экспорт TXT</button>
-      <button onclick="exportPDF()">Экспорт PDF</button>
-      <button onclick="exportJSON()">Сохранить как...</button>
-      <button onclick="importJSON()">Импортировать...</button>
-	  <button id="toggleGuestList" onclick="toggleGuestList()">
-		<span id="eyeIcon">👁️</span>
-	  </button>
-	  <button onclick="clearPlanner()">Удалить всё</button>
+      <button onclick="addTableWithInput()">Доб. стол</button>
+      <button onclick="exportGuestList()">TXT</button>
+      <button onclick="exportJSON()">Сохр.</button>
+      <button onclick="importJSON()">Восст.</button>
+	  <button onclick="clearPlanner()">Очист. всё</button>
     </div>
-    <div id="canvas"></div>
-    <div class="guest-list" id="guestList"></div>
+    <div id="canvas-wrapper">
+      <div id="canvas"></div>
+    </div>
   </div>
+  <div id="zoom-controls">
+    <button onclick="zoomIn()">+</button>
+    <button onclick="zoomOut()">−</button>
+    <button onclick="resetZoom()">⭮</button>
+  </div>
+  <button id="toggleGuestList" onclick="toggleGuestList()">👁</button>
+  <div class="guest-list" id="guestList"></div>
   <script>
-    let tableCounter = 0;
-    let lastDeleted = null;
+    let scale = 1;
     const canvas = document.getElementById('canvas');
+	let tableCounter = 1;
+	
+	function applyScale() {
+		updateCanvasTransform();
+	}
+    function zoomIn() {
+      scale *= 1.2;
+      applyScale();
+    }
+    function zoomOut() {
+      scale /= 1.2;
+      applyScale();
+    }
+    function resetZoom() {
+      scale = 1;
+      applyScale();
+	  canvas.style.transform = `translate(0px, 0px) scale(${scale})`;
+    }
+	
+	let canvasOffsetX = 0;
+let canvasOffsetY = 0;
+let isPanning = false;
+let startPanX, startPanY;
 
-    function saveSession() {
-      const tables = [...document.querySelectorAll('.table')].map(table => {
-        return {
-          id: table.getAttribute('data-id'),
-          chairs: parseInt(table.getAttribute('data-chairs')),
-          top: table.style.top,
-          left: table.style.left,
-          guests: [...table.querySelectorAll('input')].map(input => input.value)
-        };
-      });
-      localStorage.setItem('plannerData', JSON.stringify(tables));
+function updateCanvasTransform() {
+  canvas.style.transform = `translate(${canvasOffsetX}px, ${canvasOffsetY}px) scale(${scale})`;
+}
+
+function enableCanvasPan() {
+  const wrapper = document.getElementById('canvas-wrapper');
+
+  // ПК: Панорамирование правой кнопкой мыши
+  wrapper.addEventListener('mousedown', e => {
+    if (e.button === 1) {
+      isPanning = true;
+      startPanX = e.clientX;
+      startPanY = e.clientY;
+      e.preventDefault();
+    }
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (isPanning) {
+      const dx = e.clientX - startPanX;
+      const dy = e.clientY - startPanY;
+      startPanX = e.clientX;
+      startPanY = e.clientY;
+      canvasOffsetX += dx;
+      canvasOffsetY += dy;
+      updateCanvasTransform();
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isPanning) isPanning = false;
+  });
+
+  // Мобильные устройства: панорамирование двумя пальцами
+  let lastTouchDistance = 0;
+  wrapper.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      isPanning = true;
+      startPanX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      startPanY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    }
+  });
+
+  wrapper.addEventListener('touchmove', e => {
+    if (isPanning && e.touches.length === 2) {
+      const currentX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const dx = currentX - startPanX;
+      const dy = currentY - startPanY;
+      canvasOffsetX += dx;
+      canvasOffsetY += dy;
+      startPanX = currentX;
+      startPanY = currentY;
+      updateCanvasTransform();
+    }
+  });
+
+  wrapper.addEventListener('touchend', e => {
+    if (e.touches.length < 2) isPanning = false;
+  });
+}
+
+
+    function toggleGuestList() {
+      document.getElementById('guestList').classList.toggle('hidden');
+    }
+	
+	function addTableWithInput() {
+      const chairs = parseInt(prompt('Количество посадочных мест?', '4')) || 4;
+      const table = document.createElement('div');
+      table.className = 'table';
+      table.style.left = '100px';
+      table.style.top = '100px';
+      table.dataset.id = tableCounter;
+      table.innerHTML = `<strong>Стол ${tableCounter}</strong><br>`;
+      for (let i = 0; i < chairs; i++) {
+        const chair = document.createElement('div');
+        chair.className = 'chair';
+        const input = document.createElement('input');
+        input.placeholder = `Гость ${i + 1}`;
+        input.addEventListener('click', e => e.stopPropagation());
+        chair.appendChild(input);
+        table.appendChild(chair);
+      }
+      makeDraggable(table);
+      canvas.appendChild(table);
+      tableCounter++;
+      saveSession();
     }
 
-    function loadSession() {
-      const data = JSON.parse(localStorage.getItem('plannerData') || '[]');
-      data.forEach(addTableFromData);
-      updateGuestList();
-    }
-
-    function addTableFromData(item) {
+function addTableFromData(item) {
   const table = document.createElement('div');
   table.classList.add('table');
   table.style.top = item.top;
   table.style.left = item.left;
-  table.setAttribute('data-id', item.id);
-  table.setAttribute('data-chairs', item.chairs);
-  table.style.width = '120px';
-  table.style.height = '120px';
-
-  const label = document.createElement('div');
-  label.innerText = `Стол ${tableCounter + 1}`;
-  label.style.textAlign = 'center';
-  table.appendChild(label);
-
-  const radius = 60; // Радиус для круга с креслами
-  const centerX = 60; // Центр таблицы
-  const centerY = 60;
+  table.dataset.id = tableCounter;
+  table.innerHTML = `<strong>Стол ${tableCounter}</strong><br>`;
 
   item.guests.forEach((name, i) => {
-    const angle = (2 * Math.PI * i) / item.chairs;
-    const chairX = centerX + radius * Math.cos(angle) - 10;
-    const chairY = centerY + radius * Math.sin(angle) - 10;
-
     const chair = document.createElement('div');
-    chair.classList.add('chair');
-    chair.style.position = 'absolute';
-    chair.style.left = `${chairX}px`;
-    chair.style.top = `${chairY}px`;
-
-    const input = document.createElement('input');
-    input.setAttribute('type', 'text');
-    input.setAttribute('placeholder', `Guest ${i + 1}`);
-    input.value = name;
-    input.style.zIndex = '10';  // Убедимся, что поле ввода будет поверх остальных элементов
-    chair.appendChild(input);
-    table.appendChild(chair);
+        chair.className = 'chair';
+        const input = document.createElement('input');
+        input.placeholder = `Гость ${i + 1}`;
+		input.value = name;
+        input.addEventListener('click', e => e.stopPropagation());
+        chair.appendChild(input);
+        table.appendChild(chair);
   });
 
   canvas.appendChild(table);
   makeDraggable(table);
   tableCounter++;
 }
+
 
 
 function clearPlanner() {
@@ -194,24 +303,6 @@ function clearPlanner() {
   }
 }
 
-
-    function addTableWithInput() {
-      const input = document.getElementById('chairCount');
-      const chairs = parseInt(input.value) || 4;
-      addTable(chairs);
-    }
-
-    function addTable(chairs) {
-      const item = {
-        id: `table-${tableCounter}`,
-        chairs,
-        top: '100px',
-        left: '100px',
-        guests: Array(chairs).fill('')
-      };
-      addTableFromData(item);
-      updateGuestList();
-    }
 
     function makeDraggable(el) {
   let isDragging = false;
@@ -290,25 +381,6 @@ function clearPlanner() {
   }
 }
 
-let isGuestListVisible = true;
-
-function toggleGuestList() {
-  const guestList = document.getElementById('guestList');
-  const eyeIcon = document.getElementById('eyeIcon');
-
-  if (isGuestListVisible) {
-    guestList.style.display = 'none'; // скрыть список
-    eyeIcon.textContent = '🙈'; // иконка для скрытого состояния
-  } else {
-    guestList.style.display = 'block'; // показать список
-    eyeIcon.textContent = '👁️'; // обычная иконка глаза
-  }
-
-  isGuestListVisible = !isGuestListVisible;
-}
-
-
-
     function handleLongPress(el) {
       const confirmDelete = confirm('Удалить этот стол?');
       if (confirmDelete) {
@@ -358,14 +430,14 @@ function toggleGuestList() {
 
     function exportGuestList() {
       const tables = document.querySelectorAll('.table');
-      let text = 'Список гостей отсортированных по столам:\n';
+      let text = 'Список гостей по столам:\n';
       tables.forEach(table => {
         const id = table.getAttribute('data-id');
         const inputs = table.querySelectorAll('input');
         text += `\n${id}:\n`;
         inputs.forEach((input, i) => {
           const name = input.value.trim() || '(empty)';
-          text += `  Seat ${i + 1}: ${name}\n`;
+          text += `  Место ${i + 1}: ${name}\n`;
         });
       });
       const blob = new Blob([text], { type: 'text/plain' });
@@ -376,63 +448,86 @@ function toggleGuestList() {
       a.click();
     }
 
-    async function exportPDF() {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  doc.setFont('helvetica'); // Стандартный шрифт, поддерживающий UTF-8
-
-  let y = 10;
-  let tableCount = 1;
-
-  const tables = document.querySelectorAll('.table');
-  tables.forEach(table => {
-    const id = table.getAttribute('data-id');
-    doc.text(`Table ${tableCount}: ${id}`, 10, y);
-    y += 6;
-
-    const inputs = table.querySelectorAll('input');
-    inputs.forEach((input, i) => {
-      const name = input.value.trim() || '(empty)';
-      doc.text(`  Seat ${i + 1}: ${name}`, 10, y);
-      y += 6;
-      if (y > 270) {  // Когда место на странице заканчивается, добавляем новую страницу
-        doc.addPage();
-        y = 10;
-      }
-    });
-    y += 4;
-    tableCount++;  // Увеличиваем счетчик столов
-  });
-
-  doc.save('guest-list.pdf');
-}
-
-
     function exportJSON() {
-      const data = localStorage.getItem('plannerData') || '[]';
-      const blob = new Blob([data], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
+      const data = [];
+      document.querySelectorAll('.table').forEach(table => {
+        data.push({
+          id: table.dataset.id,
+          left: table.style.left,
+          top: table.style.top,
+          guests: Array.from(table.querySelectorAll('input')).map(i => i.value)
+        });
+      });
+      const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
       const a = document.createElement('a');
-      a.href = url;
-      a.download = 'planner-backup.json';
+      a.href = URL.createObjectURL(blob);
+      a.download = 'table-plan.json';
       a.click();
     }
 
     function importJSON() {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'application/json';
+      input.accept = '.json';
       input.onchange = e => {
         const file = e.target.files[0];
         const reader = new FileReader();
-        reader.onload = () => {
-          localStorage.setItem('plannerData', reader.result);
+        reader.onload = evt => {
+          const data = JSON.parse(evt.target.result);
           canvas.innerHTML = '';
-          loadSession();
+          tableCounter = 1;
+          data.forEach(t => {
+            const table = document.createElement('div');
+            table.className = 'table';
+            table.style.left = t.left;
+            table.style.top = t.top;
+            table.dataset.id = t.id;
+            table.innerHTML = `<strong>Стол ${t.id}</strong><br>`;
+            t.guests.forEach((g, i) => {
+              const chair = document.createElement('div');
+              chair.className = 'chair';
+              const input = document.createElement('input');
+              input.value = g;
+              input.placeholder = `Гость ${i + 1}`;
+              input.addEventListener('click', ev => ev.stopPropagation());
+              chair.appendChild(input);
+              table.appendChild(chair);
+            });
+            makeDraggable(table);
+            table.addEventListener('contextmenu', (e) => {
+              e.preventDefault();
+              if (confirm('Удалить этот стол?')) {
+                table.remove();
+                saveSession();
+              }
+            });
+            canvas.appendChild(table);
+            tableCounter = Math.max(tableCounter, parseInt(t.id) + 1);
+          });
+          saveSession();
         };
         reader.readAsText(file);
       };
       input.click();
+    }
+
+    function saveSession() {
+      const tables = [...document.querySelectorAll('.table')].map(table => {
+        return {
+          id: table.getAttribute('data-id'),
+          chairs: parseInt(table.getAttribute('data-chairs')),
+          top: table.style.top,
+          left: table.style.left,
+          guests: [...table.querySelectorAll('input')].map(input => input.value)
+        };
+      });
+      localStorage.setItem('plannerData', JSON.stringify(tables));
+    }
+
+    function loadSession() {
+      const data = JSON.parse(localStorage.getItem('plannerData') || '[]');
+      data.forEach(addTableFromData);
+      updateGuestList();
     }
 
     if ('serviceWorker' in navigator) {
@@ -442,7 +537,10 @@ function toggleGuestList() {
     }
 
     window.addEventListener('beforeunload', saveSession);
-    window.addEventListener('load', loadSession);
+    window.addEventListener('load', () => {
+		loadSession();
+		enableCanvasPan();
+	});
   </script>
 </body>
 </html>
